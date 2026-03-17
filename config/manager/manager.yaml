@@ -84,14 +84,18 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         env:
-          - name: IRONIC_URL
-            value: "https://esi.massopen.cloud:13385"
           - name: OSAC_AUTH_TOKEN
             valueFrom:
               secretKeyRef:
                 name: ironic-credentials
                 key: token
                 optional: true
+          - name: OSAC_INVENTORY_URL
+            value: "https://esi.massopen.cloud:13385"
+          - name: REDIS_ADDR
+            value: "localhost:6379"
+          - name: REDIS_PASSWORD
+            value: ""
         # TODO(user): Configure the resources accordingly based on the project requirements.
         # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
         resources:
@@ -102,6 +106,24 @@ spec:
             cpu: 10m
             memory: 64Mi
         volumeMounts: []
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
       volumes: []
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

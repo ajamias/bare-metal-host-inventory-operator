@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -24,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,9 +42,12 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/ajamias/bare-metal-host-inventory-operator/api/v1alpha1"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/controller"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/inventory"
+	"github.com/ajamias/bare-metal-host-inventory-operator/internal/lock"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -231,10 +236,42 @@ func main() {
 
 	inventoryClient := inventory.NewInventoryClient(&http.Client{}, inventoryUrl, authToken)
 
+	// config redis
+	redisAddr, ok := os.LookupEnv("REDIS_ADDR")
+	if !ok {
+		redisAddr = "localhost:6379"
+	}
+
+	redisPassword := os.Getenv("REDIS_PASSWORD") // optional
+	redisDB := 0                                 // use default DB
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+		DB:       redisDB,
+	})
+
+	// Test Redis connection
+	ctx := context.Background()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		setupLog.Error(err, "failed to connect to Redis")
+		os.Exit(1)
+	}
+	setupLog.Info("Successfully connected to Redis", "addr", redisAddr)
+
+	// Create node lock with 30 second TTL
+	hostLocker := lock.NewRedisLock(redisClient, 30*time.Second)
+	if hostLocker == nil {
+		setupLog.Error(errors.New("failed to create host locker"), "hostLocker is nil")
+		os.Exit(1)
+	}
+	setupLog.Info("Successfully created distributed lock client", "ttl", "30s")
+
 	if err := (&controller.HostReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		InventoryClient: inventoryClient,
+		HostLocker:      hostLocker,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Host")
 		os.Exit(1)

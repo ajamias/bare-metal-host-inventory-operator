@@ -158,7 +158,7 @@ func (c *InventoryClient) GetHosts(
 			if mt, ok := host.Extra["matchType"].(string); ok {
 				hostMatchType = mt
 			}
-			if cid, ok := host.Extra["poolID"].(string); ok {
+			if cid, ok := host.Extra["poolId"].(string); ok {
 				hostPoolID = cid
 			}
 		}
