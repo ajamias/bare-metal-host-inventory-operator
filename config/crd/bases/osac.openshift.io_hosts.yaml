@@ -1,0 +1,154 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: hosts.osac.openshift.io
+spec:
+  group: osac.openshift.io
+  names:
+    kind: Host
+    listKind: HostList
+    plural: hosts
+    singular: host
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Host is the Schema for the hosts API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HostSpec defines the desired state of Host.
+            properties:
+              image:
+                description: Image to provision; when set, triggers provisioning.
+                  When cleared, triggers deprovisioning.
+                properties:
+                  checksum:
+                    description: Checksum (md5 hex) of the .iso file.
+                    type: string
+                  format:
+                    default: live-iso
+                    description: Format must be live-iso (default).
+                    type: string
+                  url:
+                    description: URL of the live ISO.
+                    type: string
+                required:
+                - url
+                type: object
+              matches:
+                description: Matches is a struct of constraints for when selecting
+                  a host from the inventory
+                properties:
+                  hostClass:
+                    description: HostClass is the class/capability tier of the host.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                  managedBy:
+                    description: ManagedBy identifies the controller or system that
+                      manages this host.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                  query:
+                    additionalProperties:
+                      type: string
+                    description: Query is a map of additional values to filter through
+                    type: object
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                required:
+                - hostClass
+                - managedBy
+                type: object
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
+              networkConfig:
+                description: NetworkConfig specifies host networking (e.g. which network/VLAN
+                  to attach).
+                properties:
+                  network:
+                    description: Network identifies the network (e.g. private-vlan-network)
+                      the host should use.
+                    type: string
+                required:
+                - network
+                type: object
+              online:
+                description: Online is the desired power state (true = on, false =
+                  off).
+                type: boolean
+            required:
+            - matches
+            - online
+            type: object
+          status:
+            description: HostStatus defines the observed state of Host.
+            properties:
+              nodeId:
+                description: NodeID is the Ironic node UUID (or name) this Host represents.
+                  Required for power management.
+                type: string
+              poweredOn:
+                description: PoweredOn is the current power state.
+                type: boolean
+              provisioning:
+                description: Provisioning holds ID, current image, and state from
+                  the backend.
+                properties:
+                  id:
+                    description: ID is the host ID in the Bare Metal Management system.
+                    type: string
+                  image:
+                    description: Image is the currently provisioned image (if any).
+                    properties:
+                      checksum:
+                        description: Checksum (md5 hex) of the .iso file.
+                        type: string
+                      format:
+                        default: live-iso
+                        description: Format must be live-iso (default).
+                        type: string
+                      url:
+                        description: URL of the live ISO.
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  state:
+                    description: State is the current provisioning state.
+                    type: string
+                type: object
+            required:
+            - nodeId
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
