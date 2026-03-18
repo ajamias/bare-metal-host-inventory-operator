@@ -20,13 +20,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/DanNiESh/host-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/ajamias/bare-metal-host-inventory-operator/api/v1alpha1"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/inventory"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/lock"
 )
@@ -82,7 +82,7 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 	}
 
 	// If NodeID is already set, the host has been assigned
-	if host.Status.NodeID != "" {
+	if host.Status.ID != "" {
 		log.Info("Host is already acquired, nothing to do")
 		return ctrl.Result{}, nil
 	}
@@ -95,7 +95,7 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 		ctx,
 		"",
 		inventory.WithHostClass(hostClass),
-		inventory.WithMatchType(managedBy),
+		inventory.WithManagedBy(managedBy),
 		inventory.WithCount(1),
 	)
 	if err != nil {
@@ -138,9 +138,16 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 		return ctrl.Result{}, err
 	}
 
-	host.Status.NodeID = inventoryHost.NodeID
+	host.Status.ID = inventoryHost.NodeID
+	host.Status.HostManagementClass = "openstack" // TODO: HARDCODED
 	if err := r.Status().Update(ctx, host); err != nil {
 		log.Error(err, "Failed to update Host CR status with NodeID", "host", host.Name, "nodeID", inventoryHost.NodeID)
+		return ctrl.Result{}, err
+	}
+
+	// Send update event for the next Host management operator
+	if err := r.Update(ctx, host); err != nil {
+		log.Error(err, "Failed to update Host CR with NodeID", "host", host.Name, "nodeID", inventoryHost.NodeID)
 		return ctrl.Result{}, err
 	}
 
@@ -164,8 +171,8 @@ func (r *HostReconciler) handleDeletion(ctx context.Context, host *v1alpha1.Host
 	}
 
 	// Only free in inventory if a NodeID was assigned
-	if host.Status.NodeID != "" {
-		err := r.InventoryClient.PatchInventoryHostPoolID(ctx, host.Status.NodeID, "")
+	if host.Status.ID != "" {
+		err := r.InventoryClient.PatchInventoryHostPoolID(ctx, host.Status.ID, "")
 		if err != nil {
 			log.Error(err, "Failed to free host in inventory", "host", host.Name)
 			return ctrl.Result{}, err

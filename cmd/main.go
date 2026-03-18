@@ -44,7 +44,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/ajamias/bare-metal-host-inventory-operator/api/v1alpha1"
+	"github.com/DanNiESh/host-operator/api/v1alpha1"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/controller"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/inventory"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/lock"

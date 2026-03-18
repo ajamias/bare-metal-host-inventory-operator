@@ -87,11 +87,15 @@ spec:
           - name: OSAC_AUTH_TOKEN
             valueFrom:
               secretKeyRef:
-                name: ironic-credentials
-                key: token
+                name: osac-ironic-credentials
+                key: OSAC_AUTH_TOKEN
                 optional: true
           - name: OSAC_INVENTORY_URL
-            value: "https://esi.massopen.cloud:13385"
+            valueFrom:
+              secretKeyRef:
+                name: osac-inventory-url
+                key: OSAC_INVENTORY_URL
+                optional: true
           - name: REDIS_ADDR
             value: "localhost:6379"
           - name: REDIS_PASSWORD

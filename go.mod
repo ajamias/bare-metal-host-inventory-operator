@@ -1,6 +1,6 @@
 module github.com/ajamias/bare-metal-host-inventory-operator
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/onsi/ginkgo/v2 v2.22.0
@@ -13,6 +13,7 @@ require (
 
 require (
 	cel.dev/expr v0.19.1 // indirect
+	github.com/DanNiESh/host-operator v0.0.0-20260318181456-9f007dd5da5b // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

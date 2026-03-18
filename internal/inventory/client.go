@@ -58,7 +58,7 @@ func NewInventoryClient(httpClient *http.Client, baseURL *url.URL, authToken str
 // getHostsOptions holds configuration for GetHosts
 type getHostsOptions struct {
 	hostClass *string
-	matchType *string
+	managedBy *string
 	count     int
 }
 
@@ -72,10 +72,10 @@ func WithHostClass(hostClass string) GetHostsOption {
 	}
 }
 
-// WithMatchType sets the match type filter
-func WithMatchType(matchType string) GetHostsOption {
+// WithManagedBy sets the match type filter
+func WithManagedBy(managedBy string) GetHostsOption {
 	return func(o *getHostsOptions) {
-		o.matchType = &matchType
+		o.managedBy = &managedBy
 	}
 }
 
@@ -152,18 +152,18 @@ func (c *InventoryClient) GetHosts(
 			continue
 		}
 
-		hostMatchType := ""
+		hostManagedBy := ""
 		hostPoolID := ""
 		if host.Extra != nil {
-			if mt, ok := host.Extra["matchType"].(string); ok {
-				hostMatchType = mt
+			if mt, ok := host.Extra["managedBy"].(string); ok {
+				hostManagedBy = mt
 			}
 			if cid, ok := host.Extra["poolId"].(string); ok {
 				hostPoolID = cid
 			}
 		}
 
-		if options.matchType != nil && hostMatchType != *options.matchType {
+		if options.managedBy != nil && hostManagedBy != *options.managedBy {
 			continue
 		}
 
