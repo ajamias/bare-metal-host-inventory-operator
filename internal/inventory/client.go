@@ -17,230 +17,30 @@ limitations under the License.
 package inventory
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"net/url"
-
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// HostResponse represents the response from the inventory service
-type HostResponse struct {
-	Hosts []Host `json:"nodes"`
-}
-
-// Host represents a single host from the inventory
+// Host is the common return type all clients must use
 type Host struct {
-	NodeID         string         `json:"uuid"`
-	HostClass      string         `json:"resource_class"`
-	ProvisionState string         `json:"provision_state"`
-	Extra          map[string]any `json:"extra"`
+	BareMetalPoolID     string
+	BareMetalPoolHostID string
+	InventoryHostID     string
+	Name                string
+	HostClass           string
+	ManagementClass     string
+	NetworkClass        string
+	ProvisionState      string
+	ManagedBy           string
 }
 
-type InventoryClient struct {
-	httpClient *http.Client
-	baseURL    *url.URL
-	authToken  string
-}
+// Client interface for inventory implementations
+type Client interface {
+	// Returns a host with matching fields that is not already assigned
+	FindFreeHost(ctx context.Context, matchExpressions map[string]string) (*Host, error)
 
-func NewInventoryClient(httpClient *http.Client, baseURL *url.URL, authToken string) *InventoryClient {
-	return &InventoryClient{
-		httpClient: httpClient,
-		baseURL:    baseURL,
-		authToken:  authToken,
-	}
-}
+	// Updates the host by marking it as assigned, returns true if the update request was performed
+	AssignHost(ctx context.Context, inventoryHostID string, bareMetalPoolID string, bareMetalPoolHostID string, labels map[string]string) (*Host, error)
 
-// getHostsOptions holds configuration for GetHosts
-type getHostsOptions struct {
-	hostClass *string
-	managedBy *string
-	count     int
-}
-
-// GetHostsOption is a function that configures getHostsOptions
-type GetHostsOption func(*getHostsOptions)
-
-// WithHostClass sets the host class filter
-func WithHostClass(hostClass string) GetHostsOption {
-	return func(o *getHostsOptions) {
-		o.hostClass = &hostClass
-	}
-}
-
-// WithManagedBy sets the match type filter
-func WithManagedBy(managedBy string) GetHostsOption {
-	return func(o *getHostsOptions) {
-		o.managedBy = &managedBy
-	}
-}
-
-// WithCount sets the maximum number of hosts to return
-func WithCount(count int) GetHostsOption {
-	return func(o *getHostsOptions) {
-		if count < 0 {
-			count = 0
-		}
-		o.count = count
-	}
-}
-
-// GetHosts retrieves hosts from the inventory service
-func (c *InventoryClient) GetHosts(
-	ctx context.Context,
-	poolID string,
-	opts ...GetHostsOption,
-) ([]Host, error) {
-	options := &getHostsOptions{}
-	for _, opt := range opts {
-		opt(options)
-	}
-	log := logf.FromContext(ctx).V(1)
-	ctx = logf.IntoContext(ctx, log)
-
-	requestURL := *c.baseURL
-	requestURL.Path = "/v1/nodes/detail"
-	query := url.Values{}
-	requestURL.RawQuery = query.Encode()
-
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
-	if err != nil {
-		log.Error(err, "Failed to create NewRequestWithContext")
-		return nil, err
-	}
-
-	httpRequest.Header.Set("X-Auth-Token", c.authToken)
-	httpRequest.Header.Set("X-OpenStack-Ironic-API-Version", "1.69")
-
-	response, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		log.Error(err, "Failed to perform request")
-		return nil, err
-	}
-	defer func() {
-		err := response.Body.Close()
-		if err != nil {
-			log.Error(err, "Failed to close connection")
-		}
-	}()
-
-	if response.StatusCode != http.StatusOK {
-		message, err := io.ReadAll(response.Body)
-		if err != nil {
-			log.Error(err, "Failed to read response body")
-			return nil, err
-		}
-		err = errors.New(string(message))
-		return nil, err
-	}
-
-	hostResponse := HostResponse{}
-	decoder := json.NewDecoder(response.Body)
-	if err := decoder.Decode(&hostResponse); err != nil {
-		log.Error(err, "Failed to decode response body")
-		return nil, err
-	}
-
-	// assume filters don't work on the inventory
-	hosts := []Host{}
-	for _, host := range hostResponse.Hosts {
-		if options.hostClass != nil && host.HostClass != *options.hostClass {
-			continue
-		}
-
-		hostManagedBy := ""
-		hostPoolID := ""
-		if host.Extra != nil {
-			if mt, ok := host.Extra["managedBy"].(string); ok {
-				hostManagedBy = mt
-			}
-			if cid, ok := host.Extra["poolId"].(string); ok {
-				hostPoolID = cid
-			}
-		}
-
-		if options.managedBy != nil && hostManagedBy != *options.managedBy {
-			continue
-		}
-
-		if hostPoolID != poolID {
-			continue
-		}
-
-		hosts = append(hosts, host)
-
-		if options.count > 0 && len(hosts) >= options.count {
-			break
-		}
-	}
-
-	log.Info("Successfully queried for hosts", "hosts", hosts)
-
-	return hosts, nil
-}
-
-// PatchInventoryHostPoolID updates the pool ID for a host in the inventory
-func (c *InventoryClient) PatchInventoryHostPoolID(
-	ctx context.Context,
-	nodeID string,
-	poolID string,
-) error {
-	log := logf.FromContext(ctx).V(1)
-
-	requestURL := *c.baseURL
-	requestURL.Path = "/v1/nodes/" + nodeID
-
-	patchBody := []map[string]string{
-		{
-			"op":    "replace",
-			"path":  "/extra/poolId",
-			"value": poolID,
-		},
-	}
-
-	bodyBytes, err := json.Marshal(patchBody)
-	if err != nil {
-		log.Error(err, "Failed to marshal request body")
-		return err
-	}
-
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPatch, requestURL.String(), bytes.NewReader(bodyBytes))
-	if err != nil {
-		log.Error(err, "Failed to create NewRequestWithContext")
-		return err
-	}
-
-	httpRequest.Header.Set("X-Auth-Token", c.authToken)
-	httpRequest.Header.Set("X-OpenStack-Ironic-API-Version", "1.69")
-	httpRequest.Header.Set("Content-Type", "application/json-patch+json")
-
-	response, err := c.httpClient.Do(httpRequest)
-	if err != nil {
-		log.Error(err, "Failed to perform request")
-		return err
-	}
-	defer func() {
-		err := response.Body.Close()
-		if err != nil {
-			log.Error(err, "Failed to close connection")
-		}
-	}()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message, err := io.ReadAll(response.Body)
-		if err != nil {
-			log.Error(err, "Failed to read response body")
-			return err
-		}
-		err = errors.New(string(message))
-		return err
-	}
-
-	log.Info("Successfully patched host", "host", nodeID)
-
-	return nil
+	// Updates the host by undoing the assign operation
+	UnassignHost(ctx context.Context, inventoryHostID string, labels []string) error
 }

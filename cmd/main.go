@@ -21,8 +21,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -211,30 +209,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// config inventory url
-	inventoryEndpoint, ok := os.LookupEnv("OSAC_INVENTORY_URL")
+	// config openstack
+	cloudName, ok := os.LookupEnv("OS_CLOUD")
 	if !ok {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL not found")
-		os.Exit(1)
+		cloudName = "openstack"
 	}
-	inventoryUrl, err := url.Parse(inventoryEndpoint)
+
+	// Create OpenStack inventory client
+	ctx := context.Background()
+	inventoryClient, err := inventory.NewOpenStackClient(ctx, cloudName)
 	if err != nil {
-		setupLog.Error(err, "OSAC_INVENTORY_URL is not a valid URL")
+		setupLog.Error(err, "Failed to create OpenStack inventory client")
 		os.Exit(1)
 	}
-	if inventoryUrl.Scheme != "http" && inventoryUrl.Scheme != "https" {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_INVENTORY_URL only supports http or https")
-		os.Exit(1)
-	}
-
-	// config auth token
-	authToken, ok := os.LookupEnv("OSAC_AUTH_TOKEN")
-	if !ok {
-		setupLog.Error(errors.New("unable to set env variables"), "OSAC_AUTH_TOKEN not found")
-		os.Exit(1)
-	}
-
-	inventoryClient := inventory.NewInventoryClient(&http.Client{}, inventoryUrl, authToken)
+	setupLog.Info("Successfully initialized OpenStack inventory client")
 
 	// config redis
 	redisAddr, ok := os.LookupEnv("REDIS_ADDR")
@@ -252,7 +240,6 @@ func main() {
 	})
 
 	// Test Redis connection
-	ctx := context.Background()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		setupLog.Error(err, "failed to connect to Redis")
 		os.Exit(1)
@@ -271,7 +258,7 @@ func main() {
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		InventoryClient: inventoryClient,
-		HostLocker:      hostLocker,
+		Locker:          hostLocker,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Host")
 		os.Exit(1)
