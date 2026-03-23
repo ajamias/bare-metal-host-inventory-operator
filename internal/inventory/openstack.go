@@ -27,17 +27,36 @@ import (
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 )
 
+var (
+	_ Client        = (*OpenStackClient)(nil)
+	_ NewClientFunc = NewClientFunc(NewOpenStackClient)
+)
+
+func init() {
+	newClientFuncs["openstack"] = NewOpenStackClient
+}
+
 type OpenStackClient struct {
 	client *gophercloud.ServiceClient
 }
 
 // NewOpenStackClient creates a new OpenStack inventory client
-func NewOpenStackClient(ctx context.Context, cloud string) (*OpenStackClient, error) {
-	opts := &clientconfig.ClientOpts{
-		Cloud: cloud,
+func NewOpenStackClient(ctx context.Context, cfg *Config) (Client, error) {
+	opts := cfg.Options
+	cloud, ok := opts["openstack"].(clientconfig.Cloud)
+	if !ok {
+		cloud = clientconfig.Cloud{}
 	}
 
-	providerClient, err := clientconfig.AuthenticatedClient(ctx, opts)
+	clientOpts := clientconfig.ClientOpts{
+		Cloud:        cloud.Cloud,
+		AuthType:     cloud.AuthType,
+		AuthInfo:     cloud.AuthInfo,
+		RegionName:   cloud.RegionName,
+		EndpointType: cloud.EndpointType,
+	}
+
+	providerClient, err := clientconfig.AuthenticatedClient(ctx, &clientOpts)
 	if err != nil {
 		return nil, err
 	}
