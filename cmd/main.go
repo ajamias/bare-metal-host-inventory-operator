@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 
 	"github.com/DanNiESh/host-operator/api/v1alpha1"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/controller"
@@ -209,20 +210,42 @@ func main() {
 		os.Exit(1)
 	}
 
-	// config openstack
-	cloudName, ok := os.LookupEnv("OS_CLOUD")
-	if !ok {
-		cloudName = "openstack"
-	}
-
-	// Create OpenStack inventory client
 	ctx := context.Background()
-	inventoryClient, err := inventory.NewOpenStackClient(ctx, cloudName)
+
+	// Config inventory
+	inventoryConfigsFile, err := os.Open("/etc/osac/inventory.yaml")
 	if err != nil {
-		setupLog.Error(err, "Failed to create OpenStack inventory client")
+		setupLog.Error(err, "Failed to open inventory config")
 		os.Exit(1)
 	}
-	setupLog.Info("Successfully initialized OpenStack inventory client")
+	inventoryDecoder := yaml.NewDecoder(inventoryConfigsFile)
+	inventoryConfigs := []inventory.Config{}
+	if err = inventoryDecoder.Decode(&inventoryConfigs); err != nil {
+		setupLog.Error(err, "Failed to parse inventory config")
+		os.Exit(1)
+	}
+	if len(inventoryConfigs) > 1 {
+		setupLog.Error(err, "Currently does not support more than one inventory")
+		os.Exit(1)
+	}
+
+	// Create inventory clients
+	var inventoryClient inventory.Client
+	for i := range inventoryConfigs {
+		inventoryClient, err = inventory.NewClient(ctx, &inventoryConfigs[i])
+		if err != nil {
+			setupLog.Error(err, "Failed to create new underlying inventory client", "type", inventoryConfigs[i].Type)
+			os.Exit(1)
+		}
+		if inventoryClient == nil {
+			setupLog.Info("WARNING: inventory client for " + inventoryConfigs[i].Type + " is not supported")
+		}
+	}
+	if inventoryClient == nil {
+		setupLog.Error(err, "Failed to create new inventory client")
+		os.Exit(1)
+	}
+	setupLog.Info("Successfully initialized inventory client")
 
 	// config redis
 	redisAddr, ok := os.LookupEnv("REDIS_ADDR")

@@ -20,6 +20,15 @@ import (
 	"context"
 )
 
+// Config is a struct that holds info needed to create a new client implementation
+type Config struct {
+	Name                string         `yaml:"name"`
+	Type                string         `yaml:"type"`
+	Options             map[string]any `yaml:"options"`
+	HostManagementClass string         `yaml:"hostManagementClass"`
+	NetworkClass        string         `yaml:"networkClass"`
+}
+
 // Host is the common return type all clients must use
 type Host struct {
 	BareMetalPoolID     string
@@ -35,12 +44,28 @@ type Host struct {
 
 // Client interface for inventory implementations
 type Client interface {
-	// Returns a host with matching fields that is not already assigned
+	// FindFreeHost returns a host with matching fields that is not already assigned
 	FindFreeHost(ctx context.Context, matchExpressions map[string]string) (*Host, error)
 
-	// Updates the host by marking it as assigned, returns true if the update request was performed
+	// AssignHost updates the host by marking it as assigned, returns the host if the update request was performed
 	AssignHost(ctx context.Context, inventoryHostID string, bareMetalPoolID string, bareMetalPoolHostID string, labels map[string]string) (*Host, error)
 
-	// Updates the host by undoing the assign operation
+	// UnassignHost updates the host by undoing the assign operation
 	UnassignHost(ctx context.Context, inventoryHostID string, labels []string) error
+}
+
+// ClientFactory is a function that creates a new inventory client from config
+type NewClientFunc func(ctx context.Context, cfg *Config) (Client, error)
+
+// clientFactories is a registry of available inventory client implementations
+var newClientFuncs = make(map[string]NewClientFunc)
+
+// NewClient creates a new inventory client based on the config type
+func NewClient(ctx context.Context, cfg *Config) (Client, error) {
+	newClientFunc, ok := newClientFuncs[cfg.Type]
+	if !ok {
+		return nil, nil
+	}
+
+	return newClientFunc(ctx, cfg)
 }
