@@ -84,18 +84,11 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         env:
-          - name: OSAC_AUTH_TOKEN
+          - name: OS_CLOUD
             valueFrom:
-              secretKeyRef:
-                name: osac-ironic-credentials
-                key: OSAC_AUTH_TOKEN
-                optional: true
-          - name: OSAC_INVENTORY_URL
-            valueFrom:
-              secretKeyRef:
-                name: osac-inventory-url
-                key: OSAC_INVENTORY_URL
-                optional: true
+              configMapKeyRef:
+                name: osac-os-cloud
+                key: OS_CLOUD
           - name: REDIS_ADDR
             value: "localhost:6379"
           - name: REDIS_PASSWORD
@@ -109,7 +102,10 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
+        volumeMounts:
+          - name: osac-os-clouds
+            mountPath: /etc/openstack
+            readOnly: true
       - name: redis
         image: redis:7-alpine
         ports:
@@ -128,6 +124,9 @@ spec:
           capabilities:
             drop:
             - "ALL"
-      volumes: []
+      volumes:
+        - name: osac-os-clouds
+          secret:
+            secretName: osac-os-clouds
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

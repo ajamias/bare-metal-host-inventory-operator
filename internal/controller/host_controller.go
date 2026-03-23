@@ -25,7 +25,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/inventory"
 	"github.com/ajamias/bare-metal-host-inventory-operator/internal/lock"
@@ -35,11 +37,13 @@ import (
 type HostReconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
-	InventoryClient *inventory.InventoryClient
-	HostLocker      lock.Locker
+	InventoryClient inventory.Client
+	Locker          lock.Locker
 }
 
 const HostInventoryFinalizer = "osac.openshift.io/inventory"
+const NoFreeHostsRequeueFrequency = 30 * time.Second
+const TryLockFailRequeueFrequency = 1 * time.Second
 
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=hosts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=hosts/status,verbs=get;update;patch
@@ -79,86 +83,86 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 			log.Error(err, "Failed to delete Host", "host", host.Name)
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{}, nil
 	}
 
-	// If NodeID is already set, the host has been assigned
-	if host.Status.ID != "" {
+	if host.Status.ID != "" && host.Status.HostManagementClass != "" {
 		log.Info("Host is already acquired, nothing to do")
 		return ctrl.Result{}, nil
 	}
 
-	hostClass := host.Spec.Matches.HostClass
-	managedBy := host.Spec.Matches.ManagedBy
+	if host.Status.ID == "" {
+		matchExpressions := map[string]string{
+			"hostClass":      host.Spec.Matches.HostClass,
+			"managedBy":      host.Spec.Matches.ManagedBy,
+			"provisionState": host.Spec.Matches.ProvisionState,
+		}
 
-	// Get available inventory host
-	availableHosts, err := r.InventoryClient.GetHosts(
-		ctx,
-		"",
-		inventory.WithHostClass(hostClass),
-		inventory.WithManagedBy(managedBy),
-		inventory.WithCount(1),
-	)
-	if err != nil {
-		log.Error(err, "Failed to query inventory for available hosts", "host", host.Name)
-		return ctrl.Result{}, err
+		inventoryHost, err := r.InventoryClient.FindFreeHost(ctx, matchExpressions)
+		if err != nil {
+			log.Error(err, "Failed to find a free host", "host", host.Name, "matchExpressions", matchExpressions)
+			return ctrl.Result{}, err
+		}
+		if inventoryHost == nil {
+			log.Info("No matching hosts available", "host", host.Name, "matchExpressions", matchExpressions)
+			return ctrl.Result{RequeueAfter: NoFreeHostsRequeueFrequency}, nil
+		}
+
+		host.Status.ID = inventoryHost.InventoryHostID
+		if err := r.Status().Update(ctx, host); err != nil {
+			log.Error(err, "Failed to update Host CR status with ID", "host", host.Name, "InventoryHostID", inventoryHost.InventoryHostID)
+			return ctrl.Result{}, err
+		}
+
+		log.Info("Successfully updated host with inventory host id")
+		return ctrl.Result{}, nil
 	}
-	if len(availableHosts) < 1 {
-		log.Info("No available hosts in inventory", "host", host.Name, "hostClass", hostClass, "managedBy", managedBy)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-	}
 
-	inventoryHost := availableHosts[0]
-
-	// Lock inventory host
-	log.Info("Attempting to acquire lock for inventory host", "host", host.Name, "nodeID", inventoryHost.NodeID)
-	acquiredLock, err := r.HostLocker.TryLock(ctx, inventoryHost.NodeID)
+	lockKey := host.Status.ID
+	acquiredLock, err := r.Locker.TryLock(ctx, lockKey)
 	if err != nil {
-		log.Error(err, "Failed to acquire lock for inventory host", "host", host.Name, "nodeID", inventoryHost.NodeID)
+		log.Error(err, "Failed to lock host", "InventoryHostID", lockKey)
 		return ctrl.Result{}, err
 	}
 	if !acquiredLock {
-		log.Info("Inventory host already locked, retrying...",
-			"host", host.Name,
-			"nodeID", inventoryHost.NodeID)
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		log.Info("Lock for " + lockKey + " is currently held, retrying...")
+		return ctrl.Result{RequeueAfter: TryLockFailRequeueFrequency}, nil
 	}
-
-	// Ensure we release the lock if we fail to claim the node
 	defer func() {
-		if err != nil {
-			if unlockErr := r.HostLocker.Unlock(ctx, inventoryHost.NodeID); unlockErr != nil {
-				log.Error(unlockErr, "Failed to release lock after error", "nodeID", inventoryHost.NodeID)
-			}
+		// assume that Unlock has a ttl
+		if unlockErr := r.Locker.Unlock(ctx, lockKey); unlockErr != nil {
+			log.Error(unlockErr, "Failed to unlock host", "InventoryHostID", lockKey)
 		}
 	}()
 
-	err = r.InventoryClient.PatchInventoryHostPoolID(ctx, inventoryHost.NodeID, poolID)
+	inventoryHost, err := r.InventoryClient.AssignHost(
+		ctx,
+		host.Status.ID,
+		poolID,
+		string(host.UID),
+		nil, // labels
+	)
 	if err != nil {
-		log.Error(err, "Failed to mark host as acquired in inventory", "host", host.Name, "nodeID", inventoryHost.NodeID)
+		log.Error(err, "Failed to assign host", "host", host.Name, "InventoryHostID", host.Status.ID)
+		return ctrl.Result{}, err
+	}
+	if inventoryHost == nil {
+		log.Info("Host " + lockKey + " is acquired by a different CR, resetting...")
+		host.Status.ID = ""
+		if err = r.Status().Update(ctx, host); err != nil {
+			log.Error(err, "Failed to update Host CR status to remove ID", "host", host.Name)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	host.Status.HostManagementClass = inventoryHost.ManagementClass
+	if err = r.Status().Update(ctx, host); err != nil {
+		log.Error(err, "Failed to update Host CR status with ManagementClass", "host", host.Name, "ManagementClass", inventoryHost.ManagementClass)
 		return ctrl.Result{}, err
 	}
 
-	host.Status.ID = inventoryHost.NodeID
-	host.Status.HostManagementClass = "openstack" // TODO: HARDCODED
-	if err := r.Status().Update(ctx, host); err != nil {
-		log.Error(err, "Failed to update Host CR status with NodeID", "host", host.Name, "nodeID", inventoryHost.NodeID)
-		return ctrl.Result{}, err
-	}
-
-	// Send update event for the next Host management operator
-	if err := r.Update(ctx, host); err != nil {
-		log.Error(err, "Failed to update Host CR with NodeID", "host", host.Name, "nodeID", inventoryHost.NodeID)
-		return ctrl.Result{}, err
-	}
-
-	// Successfully claimed the node, now release the lock
-	// The lock was only needed during the claiming process
-	if err := r.HostLocker.Unlock(ctx, inventoryHost.NodeID); err != nil {
-		log.Error(err, "Failed to release lock after successful claim", "nodeID", inventoryHost.NodeID)
-		// Don't return error here, the node was successfully claimed
-	}
-
-	log.Info("Successfully assigned and acquired host", "host", host.Name, "nodeID", inventoryHost.NodeID)
+	log.Info("Successfully assigned and acquired host", "host", host.Name, "InventoryHostID", host.Status.ID)
 	return ctrl.Result{}, nil
 }
 
@@ -170,11 +174,27 @@ func (r *HostReconciler) handleDeletion(ctx context.Context, host *v1alpha1.Host
 		return ctrl.Result{}, nil
 	}
 
-	// Only free in inventory if a NodeID was assigned
-	if host.Status.ID != "" {
-		err := r.InventoryClient.PatchInventoryHostPoolID(ctx, host.Status.ID, "")
+	// Only free in inventory if an inventory host was assigned
+	if host.Status.HostManagementClass != "" && host.Status.ID != "" {
+		log.Info("Unassigning host from inventory", "host", host.Name, "InventoryHostID", host.Status.ID)
+
+		acquiredLock, err := r.Locker.TryLock(ctx, host.Status.ID)
 		if err != nil {
-			log.Error(err, "Failed to free host in inventory", "host", host.Name)
+			return ctrl.Result{}, err
+		}
+		if !acquiredLock {
+			log.Info("Could not acquire lock for host", "host", host.Name, "InventoryHostID", host.Status.ID)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		defer func() {
+			if unlockErr := r.Locker.Unlock(ctx, host.Status.ID); unlockErr != nil {
+				log.Error(unlockErr, "Failed to unlock host", "InventoryHostID", host.Status.ID)
+			}
+		}()
+
+		err = r.InventoryClient.UnassignHost(ctx, host.Status.ID, nil)
+		if err != nil {
+			log.Error(err, "Failed to unassign host in inventory", "host", host.Name)
 			return ctrl.Result{}, err
 		}
 	}
@@ -194,5 +214,14 @@ func (r *HostReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Host{}).
 		Named("host").
+		WithEventFilter(predicate.Funcs{
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				oldHost, ok := e.ObjectOld.(*v1alpha1.Host)
+				if !ok {
+					return false
+				}
+				return oldHost.Status.HostManagementClass == ""
+			},
+		}).
 		Complete(r)
 }

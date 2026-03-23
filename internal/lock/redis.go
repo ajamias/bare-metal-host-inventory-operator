@@ -63,10 +63,14 @@ func (l *redisLock) TryLock(ctx context.Context, key string) (bool, error) {
 		TTL:  l.ttl,
 	}).Result()
 	if err != nil {
+		// redis.Nil means the key already exists (lock not acquired)
+		if err == redis.Nil {
+			return false, nil
+		}
 		return false, fmt.Errorf("failed to acquire lock for key %s: %w", key, err)
 	}
 
-	// SetArgs with NX returns "OK" if the key was set, nil if it already exists
+	// SetArgs with NX returns "OK" if the key was set, empty string if it already exists
 	return result == "OK", nil
 }
 
