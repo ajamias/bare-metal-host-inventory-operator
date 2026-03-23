@@ -27,17 +27,41 @@ import (
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 )
 
+var (
+	_ Client        = (*OpenStackClient)(nil)
+	_ NewClientFunc = NewClientFunc(NewOpenStackClient)
+)
+
+const (
+	OpenStackBareMetalPoolIDKey     = "poolId"
+	OpenStackBareMetalPoolHostIDKey = "hostId"
+)
+
+func init() {
+	newClientFuncs["openstack"] = NewOpenStackClient
+}
+
 type OpenStackClient struct {
 	client *gophercloud.ServiceClient
 }
 
 // NewOpenStackClient creates a new OpenStack inventory client
-func NewOpenStackClient(ctx context.Context, cloud string) (*OpenStackClient, error) {
-	opts := &clientconfig.ClientOpts{
-		Cloud: cloud,
+func NewOpenStackClient(ctx context.Context, cfg *Config) (Client, error) {
+	opts := cfg.Options
+	cloud, ok := opts["openstack"].(clientconfig.Cloud)
+	if !ok {
+		cloud = clientconfig.Cloud{}
 	}
 
-	providerClient, err := clientconfig.AuthenticatedClient(ctx, opts)
+	clientOpts := clientconfig.ClientOpts{
+		Cloud:        cloud.Cloud,
+		AuthType:     cloud.AuthType,
+		AuthInfo:     cloud.AuthInfo,
+		RegionName:   cloud.RegionName,
+		EndpointType: cloud.EndpointType,
+	}
+
+	providerClient, err := clientconfig.AuthenticatedClient(ctx, &clientOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -99,12 +123,12 @@ func (c *OpenStackClient) FindFreeHost(ctx context.Context, matchExpressions map
 				continue
 			}
 
-			poolID, ok := node.Extra["poolId"].(string)
+			poolID, ok := node.Extra[OpenStackBareMetalPoolIDKey].(string)
 			if !ok {
 				poolID = ""
 			}
 
-			hostID, ok := node.Extra["hostId"].(string)
+			hostID, ok := node.Extra[OpenStackBareMetalPoolHostIDKey].(string)
 			if !ok {
 				hostID = ""
 			}
@@ -133,11 +157,11 @@ func (c *OpenStackClient) FindFreeHost(ctx context.Context, matchExpressions map
 }
 
 func (c *OpenStackClient) isAvailableHost(node *nodes.Node) bool {
-	hostID, ok := node.Extra["hostId"].(string)
+	hostID, ok := node.Extra[OpenStackBareMetalPoolHostIDKey].(string)
 	if !ok {
 		hostID = ""
 	}
-	poolID, ok := node.Extra["poolId"].(string)
+	poolID, ok := node.Extra[OpenStackBareMetalPoolIDKey].(string)
 	if !ok {
 		poolID = ""
 	}
@@ -150,12 +174,12 @@ func (c *OpenStackClient) AssignHost(ctx context.Context, inventoryHostID string
 		return nil, err
 	}
 
-	currentBareMetalPoolID, ok := node.Extra["poolId"].(string)
+	currentBareMetalPoolID, ok := node.Extra[OpenStackBareMetalPoolIDKey].(string)
 	if ok && currentBareMetalPoolID != "" && currentBareMetalPoolID != poolID {
 		return nil, nil
 	}
 
-	currentBareMetalPoolHostID, ok := node.Extra["hostId"].(string)
+	currentBareMetalPoolHostID, ok := node.Extra[OpenStackBareMetalPoolHostIDKey].(string)
 	if ok && currentBareMetalPoolHostID != "" && currentBareMetalPoolHostID != hostID {
 		return nil, nil
 	}
@@ -163,12 +187,12 @@ func (c *OpenStackClient) AssignHost(ctx context.Context, inventoryHostID string
 	updateOpts := nodes.UpdateOpts{
 		nodes.UpdateOperation{
 			Op:    nodes.ReplaceOp,
-			Path:  "/extra/poolId",
+			Path:  "/extra/" + OpenStackBareMetalPoolIDKey,
 			Value: poolID,
 		},
 		nodes.UpdateOperation{
 			Op:    nodes.ReplaceOp,
-			Path:  "/extra/hostId",
+			Path:  "/extra/" + OpenStackBareMetalPoolHostIDKey,
 			Value: hostID,
 		},
 	}
@@ -207,12 +231,12 @@ func (c *OpenStackClient) UnassignHost(ctx context.Context, inventoryHostID stri
 	updateOpts := nodes.UpdateOpts{
 		nodes.UpdateOperation{
 			Op:    nodes.ReplaceOp,
-			Path:  "/extra/poolId",
+			Path:  "/extra/" + OpenStackBareMetalPoolIDKey,
 			Value: "",
 		},
 		nodes.UpdateOperation{
 			Op:    nodes.ReplaceOp,
-			Path:  "/extra/hostId",
+			Path:  "/extra/" + OpenStackBareMetalPoolHostIDKey,
 			Value: "",
 		},
 	}

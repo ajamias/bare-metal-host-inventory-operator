@@ -103,6 +103,9 @@ spec:
             cpu: 10m
             memory: 64Mi
         volumeMounts:
+          - name: osac-inventory-config
+            mountPath: /etc/osac
+            readOnly: true
           - name: osac-os-clouds
             mountPath: /etc/openstack
             readOnly: true
@@ -125,6 +128,9 @@ spec:
             drop:
             - "ALL"
       volumes:
+        - name: osac-inventory-config
+          configMap:
+            name: osac-inventory-config
         - name: osac-os-clouds
           secret:
             secretName: osac-os-clouds
