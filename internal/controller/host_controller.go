@@ -58,6 +58,10 @@ func (r *HostReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Set TypeMeta since client.Get() doesn't populate it
+	host.APIVersion = "osac.openshift.io/v1alpha1"
+	host.Kind = "Host"
+
 	if !host.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, host)
 	}
@@ -74,6 +78,7 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 			log.Error(err, "Failed to add finalizer", "host", host.Name)
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{}, nil
 	}
 
 	poolID, ok := host.GetPoolID()
@@ -130,9 +135,7 @@ func (r *HostReconciler) handleUpdate(ctx context.Context, host *v1alpha1.Host) 
 	}
 	defer func() {
 		// assume that Unlock has a ttl
-		if unlockErr := r.Locker.Unlock(ctx, lockKey); unlockErr != nil {
-			log.Error(unlockErr, "Failed to unlock host", "InventoryHostID", lockKey)
-		}
+		_ = r.Locker.Unlock(ctx, lockKey)
 	}()
 
 	inventoryHost, err := r.InventoryClient.AssignHost(
@@ -174,7 +177,7 @@ func (r *HostReconciler) handleDeletion(ctx context.Context, host *v1alpha1.Host
 		return ctrl.Result{}, nil
 	}
 
-	// Only free in inventory if an inventory host was assigned
+	// Only free in inventory if an inventory host is marked
 	if host.Status.HostManagementClass != "" && host.Status.ID != "" {
 		log.Info("Unassigning host from inventory", "host", host.Name, "InventoryHostID", host.Status.ID)
 
@@ -184,12 +187,11 @@ func (r *HostReconciler) handleDeletion(ctx context.Context, host *v1alpha1.Host
 		}
 		if !acquiredLock {
 			log.Info("Could not acquire lock for host", "host", host.Name, "InventoryHostID", host.Status.ID)
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: TryLockFailRequeueFrequency}, nil
 		}
 		defer func() {
-			if unlockErr := r.Locker.Unlock(ctx, host.Status.ID); unlockErr != nil {
-				log.Error(unlockErr, "Failed to unlock host", "InventoryHostID", host.Status.ID)
-			}
+			// assume that Unlock has a ttl
+			_ = r.Locker.Unlock(ctx, host.Status.ID)
 		}()
 
 		err = r.InventoryClient.UnassignHost(ctx, host.Status.ID, nil)

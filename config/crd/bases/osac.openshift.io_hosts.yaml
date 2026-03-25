@@ -1,0 +1,219 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: hosts.osac.openshift.io
+spec:
+  group: osac.openshift.io
+  names:
+    kind: Host
+    listKind: HostList
+    plural: hosts
+    singular: host
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Host is the Schema for the hosts API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HostSpec defines the desired state of Host.
+            properties:
+              matches:
+                description: Matches is a struct of constraints for when selecting
+                  a host from the inventory.
+                properties:
+                  hostClass:
+                    description: HostClass is the class/capability tier of the host.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                  managedBy:
+                    description: ManagedBy identifies the controller or system that
+                      manages this host.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                  provisionState:
+                    description: ProvisionState filters for hosts in this provision
+                      state (e.g. available).
+                    type: string
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                  query:
+                    additionalProperties:
+                      type: string
+                    description: Query is a map of additional values to filter through
+                    type: object
+                    x-kubernetes-validations:
+                    - message: field is immutable
+                      rule: self == oldSelf
+                required:
+                - hostClass
+                - managedBy
+                type: object
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
+              networkInterfaces:
+                description: NetworkInterfaces lists the host's network interfaces
+                  with desired network binding.
+                items:
+                  description: NetworkInterfaceSpec describes a desired network interface
+                    and its network binding.
+                  properties:
+                    macAddress:
+                      description: MACAddress is the interface MAC address.
+                      type: string
+                    network:
+                      description: Network is the network to attach this interface
+                        to (e.g. private-vlan-network).
+                      type: string
+                  type: object
+                type: array
+              online:
+                description: Online is the desired power state (true = on, false =
+                  off).
+                type: boolean
+              provisioning:
+                description: |-
+                  Provisioning holds the desired Ironic state and
+                  when active, image-based URL and provisioning network (e.g. external).
+                properties:
+                  provisioningNetwork:
+                    description: ProvisioningNetwork identifies the provisioning network
+                      model.
+                    type: string
+                  state:
+                    description: 'State is the desired Ironic provisioning outcome:
+                      active (deployed) or available (in pool).'
+                    enum:
+                    - active
+                    - available
+                    type: string
+                  url:
+                    description: URL is set when state is active for image-based provisioning.
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: when state is active, url and provisioningNetwork must
+                    be set
+                  rule: self.state != 'active' || (size(self.url) > 0 && size(self.provisioningNetwork)
+                    > 0)
+              setUpWorkflow:
+                description: SetUpWorkflow defines the workflow to run when provisioning
+                  the host (e.g. deploy image).
+                properties:
+                  input:
+                    additionalProperties:
+                      type: string
+                    description: Input maps workflow parameter keys to values (workflow-specific).
+                    type: object
+                  workflowID:
+                    description: WorkflowID identifies the workflow to run.
+                    type: string
+                required:
+                - workflowID
+                type: object
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
+              tearDownWorkflow:
+                description: TearDownWorkflow defines the workflow to run when deprovisioning
+                  the host.
+                properties:
+                  input:
+                    additionalProperties:
+                      type: string
+                    description: Input maps workflow parameter keys to values (workflow-specific).
+                    type: object
+                  workflowID:
+                    description: WorkflowID identifies the workflow to run.
+                    type: string
+                required:
+                - workflowID
+                type: object
+                x-kubernetes-validations:
+                - message: field is immutable
+                  rule: self == oldSelf
+            required:
+            - matches
+            - online
+            type: object
+          status:
+            description: HostStatus defines the observed state of Host.
+            properties:
+              hostManagementClass:
+                description: HostManagementClass is set by the Host Inventory Operator
+                  (e.g. openstack).
+                type: string
+              id:
+                description: ID is the host ID from inventory (used by Host Management
+                  Operator as node identifier).
+                type: string
+              name:
+                description: Name is the host name from inventory.
+                type: string
+              networkClass:
+                description: NetworkClass is the network class for this host (e.g.
+                  openstack).
+                type: string
+              networkInterfaces:
+                description: NetworkInterfaces lists the host's network interfaces
+                  (from inventory or observed).
+                items:
+                  description: NetworkInterfaceStatus describes an observed network
+                    interface.
+                  properties:
+                    macAddress:
+                      description: MACAddress is the interface MAC address.
+                      type: string
+                  type: object
+                type: array
+              poweredOn:
+                description: PoweredOn is the current power state.
+                type: boolean
+              provisioning:
+                description: Provisioning holds current provisioning URL and state
+                  from the backend.
+                properties:
+                  state:
+                    description: State is the current provisioning state (e.g. active).
+                    type: string
+                  url:
+                    description: URL is the URL of the currently provisioned image.
+                    type: string
+                type: object
+              setUpWorkflowOutput:
+                additionalProperties:
+                  type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
